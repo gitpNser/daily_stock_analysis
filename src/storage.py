@@ -2558,10 +2558,15 @@ class DatabaseManager(metaclass=_DatabaseManagerMeta):
             context['yesterday'] = yesterday_data.to_dict()
             
             # 计算相比昨日的变化
-            if yesterday_data.volume and yesterday_data.volume > 0:
-                context['volume_change_ratio'] = round(
+            # Guard: minimum threshold avoids non-trading-day placeholder volumes
+            # (e.g. 1 share vs 100M shares = 100M× ratio — Issue: 成交量异常放大)
+            _MIN_YESTERDAY_VOLUME = 1000
+            if yesterday_data.volume and yesterday_data.volume >= _MIN_YESTERDAY_VOLUME:
+                _ratio = round(
                     today_data.volume / yesterday_data.volume, 2
                 )
+                if _ratio <= 50:
+                    context['volume_change_ratio'] = _ratio
             
             if yesterday_data.close and yesterday_data.close > 0:
                 context['price_change_ratio'] = round(

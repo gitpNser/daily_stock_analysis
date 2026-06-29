@@ -1595,8 +1595,20 @@ class StockAnalysisPipeline:
             yesterday = normalize_row(rows[-2])
             context["yesterday"] = yesterday
             yesterday_volume = yesterday.get("volume")
-            if yesterday_volume:
-                context["volume_change_ratio"] = round(float(today.get("volume", 0)) / float(yesterday_volume), 2)
+            # Guard: skip when yesterday_volume is zero, None, or implausibly small
+            # (e.g. non-trading-day placeholders from data sources).
+            # Without this threshold, 1 share vs 100M shares = 100M× ratio (Issue: 成交量异常放大).
+            _MIN_YESTERDAY_VOLUME = 1000  # minimum plausible daily volume in shares
+            try:
+                _yv = float(yesterday_volume)
+            except (TypeError, ValueError):
+                _yv = 0.0
+            if _yv >= _MIN_YESTERDAY_VOLUME:
+                _ratio = round(float(today.get("volume", 0)) / _yv, 2)
+                # Cap at 50× — anything beyond that is a data anomaly, not a real signal
+                if _ratio <= 50:
+                    context["volume_change_ratio"] = _ratio
+                # else: ratio is implausible → omit from context so downstream won't use it
             yesterday_close = yesterday.get("close")
             if yesterday_close:
                 context["price_change_ratio"] = round(

@@ -77,10 +77,31 @@ Your task: synthesise all inputs into a single, actionable Decision Dashboard.
    the overall signal must be downgraded accordingly.
 
 ## Signal Weighting Guidelines
+
+**Default weights** (when ALL data sources are available):
 - Technical opinion weight: ~40%
 - Intel / sentiment weight: ~30%
 - Risk flags weight: ~30% (negative override: any high-severity risk caps signal at "hold")
 - If a skill opinion is present, blend it at 20% weight (reducing others proportionally)
+
+**Dynamic weight adjustment** (CRITICAL — must apply every time):
+You MUST inspect the actual data received, not assume it is present:
+
+1. **Missing data → zero out the weight.** If a signal source returned no usable data
+   (e.g. news_sentiment is empty / "无明确信息" / "数据缺失", fundamentals block is
+   empty or all N/A, chip distribution is unavailable), set its contribution weight
+   to **0** in ``signal_attribution``. Do NOT assign 10-15% "just in case".
+
+2. **Redistribute proportionally.** After zeroing out missing sources, redistribute
+   the remaining weights so they sum to 100. If only technical data is available
+   (news=0, fundamentals=0, market=partial), technical_indicators may legitimately
+   reach 80-100 — but you MUST document this in ``confidence_reason`` with language
+   like: "新闻/基本面数据缺失，信号归因集中于技术指标，实际置信度应打折".
+
+3. **Confidence downgrade.** When ≥2 of the 4 signal sources are unavailable or
+   effectively empty, ``confidence_level`` MUST be at most "中" (medium), regardless
+   of how strong the remaining signals appear. A single strong signal source is
+   NOT equivalent to multiple confirming sources.
 
 ## Scoring
 - 80-100: buy (all conditions met, high conviction)
@@ -123,6 +144,8 @@ the available evidence supports attribution, with these keys: ``technical_indica
 ``market_conditions``, ``strongest_bullish_signal``, ``strongest_bearish_signal``.
 The first four keys are contribution weights (0-100). Non-zero valid weights
 should sum to 100; all-zero means no effective signal and must not be faked.
+**IMPORTANT:** Weights must reflect actual data availability — set to 0 for
+any source that returned no usable data (see Dynamic weight adjustment above).
 ``technical_indicators`` explains the impact of technical signals on the recommendation.
 ``news_sentiment`` explains the impact of news/sentiment on the recommendation.
 ``fundamentals`` explains the impact of fundamental factors (valuation, earnings, financials) on the recommendation.

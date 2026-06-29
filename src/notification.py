@@ -97,6 +97,37 @@ def _safe_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
 
+
+def _smart_truncate(text: str, max_len: int = 150) -> str:
+    """Truncate text at a natural sentence boundary.
+
+    Instead of hard-cutting mid-character (which produces broken sentences
+    like "但" followed by "..."), this looks for the nearest sentence-ending
+    punctuation (。！？\\n) within ``max_len`` and truncates there.
+
+    If no natural boundary is found, falls back to a space or comma break.
+    Only appends "..." when truncation actually occurred.
+    """
+    if len(text) <= max_len:
+        return text
+
+    # Try to find a sentence boundary within max_len
+    truncated = text[:max_len]
+    for sep in ("。", "！", "？", "\n", "；"):
+        last_idx = truncated.rfind(sep)
+        if last_idx > max_len * 0.5:  # only use if it's a meaningful truncation
+            return truncated[:last_idx + 1]
+
+    # Fallback: try space or comma
+    for sep in ("，", ",", " "):
+        last_idx = truncated.rfind(sep)
+        if last_idx > max_len * 0.5:
+            return truncated[:last_idx] + "..."
+
+    # Last resort: hard cut (should rarely happen)
+    return truncated[:max_len - 3] + "..."
+
+
 if TYPE_CHECKING:
     from src.analyzer import AnalysisResult
 
@@ -1650,6 +1681,21 @@ class NotificationService(
         ]
         self._append_market_status_line(lines, results, report_language)
 
+        # 汇总一览表（简洁模式：一行一只，快速扫读）
+        if len(results) >= 2:
+            _stock_hdr = "标的" if report_language != "en" else "Stock"
+            _action_hdr = "动作" if report_language != "en" else "Action"
+            lines.append("")
+            lines.append(f"| {_stock_hdr} | {_action_hdr} | {labels['score_label']} | {labels['trend_label']} |")
+            lines.append("|------|------|------|------|")
+            for result in sorted_results:
+                _, emoji, _ = self._get_signal_level(result)
+                name = self._get_display_name(result, report_language)
+                action = localize_operation_advice(result.operation_advice, report_language)
+                trend = localize_trend_prediction(result.trend_prediction, report_language)
+                lines.append(f"| {name}({result.code}) | {emoji} {action} | {result.sentiment_score} | {trend} |")
+            lines.append("")
+
         # 每只股票精简信息（控制长度）
         for result in sorted_results:
             _, emoji, _ = self._get_signal_level(result)
@@ -1662,19 +1708,19 @@ class NotificationService(
                 f"{localize_trend_prediction(result.trend_prediction, report_language)}"
             )
 
-            # 操作理由（截断）
+            # 操作理由（智能截断：在句末或自然断点处截断）
             if hasattr(result, 'buy_reason') and result.buy_reason:
-                reason = result.buy_reason[:80] + "..." if len(result.buy_reason) > 80 else result.buy_reason
+                reason = _smart_truncate(result.buy_reason, max_len=150)
                 lines.append(f"💡 {reason}")
 
             # 核心看点
             if hasattr(result, 'key_points') and result.key_points:
-                points = result.key_points[:60] + "..." if len(result.key_points) > 60 else result.key_points
+                points = _smart_truncate(result.key_points, max_len=100)
                 lines.append(f"🎯 {points}")
 
-            # 风险提示（截断）
+            # 风险提示（智能截断）
             if hasattr(result, 'risk_warning') and result.risk_warning:
-                risk = result.risk_warning[:50] + "..." if len(result.risk_warning) > 50 else result.risk_warning
+                risk = _smart_truncate(result.risk_warning, max_len=100)
                 lines.append(f"⚠️ {risk}")
 
             lines.append("")

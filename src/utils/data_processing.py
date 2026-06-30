@@ -369,8 +369,60 @@ def normalize_signal_attribution_values(signal_attr: Optional[Dict[str, Any]]) -
     return signal_attr
 
 
-def normalize_dashboard_signal_attribution(dashboard: Optional[Dict[str, Any]]) -> None:
-    """Normalize signal_attribution in dashboard dict (in-place)."""
+# Map data_available keys → signal_attribution weight keys
+_DATA_AVAILABILITY_WEIGHT_MAP: Dict[str, str] = {
+    "news": "news_sentiment",
+    "fundamentals": "fundamentals",
+    "chip": "technical_indicators",  # chip missing → reduce technical confidence
+}
+
+
+def _enforce_zero_weights_for_missing_data(
+    signal_attr: Dict[str, Any],
+    data_available: Dict[str, bool],
+) -> None:
+    """Force signal_attribution weights to 0 for data sources that were unavailable.
+
+    When news/fundamentals/chip data was not available in the analysis context,
+    the LLM should not be allowed to assign non-zero contribution weights to those
+    sources. This is a code-level enforcement of the dynamic weight rule.
+    """
+    redistributed = 0
+    # First pass: zero out weights for missing data
+    for avail_key, weight_key in _DATA_AVAILABILITY_WEIGHT_MAP.items():
+        is_available = data_available.get(avail_key, True)  # default: assume available
+        if not is_available and weight_key in signal_attr:
+            val = signal_attr[weight_key]
+            if isinstance(val, (int, float)) and val > 0:
+                redistributed += int(val)
+                signal_attr[weight_key] = 0
+
+    # Second pass: if we zeroed anything, redistribute to remaining non-zero weights
+    if redistributed > 0:
+        remaining_keys = [
+            k for k in SIGNAL_ATTRIBUTION_WEIGHT_KEYS
+            if k in signal_attr
+            and isinstance(signal_attr[k], (int, float))
+            and signal_attr[k] > 0
+        ]
+        if remaining_keys:
+            add_each = redistributed // len(remaining_keys)
+            remainder = redistributed % len(remaining_keys)
+            for i, key in enumerate(remaining_keys):
+                signal_attr[key] = int(signal_attr[key]) + add_each + (1 if i < remainder else 0)
+
+
+def normalize_dashboard_signal_attribution(
+    dashboard: Optional[Dict[str, Any]],
+    data_available: Optional[Dict[str, bool]] = None,
+) -> None:
+    """Normalize signal_attribution in dashboard dict (in-place).
+
+    Args:
+        dashboard: The dashboard dict from LLM output.
+        data_available: Optional dict indicating which data sources were available.
+            Keys: 'news', 'fundamentals', 'chip'. If False, weight → 0.
+    """
     if not isinstance(dashboard, dict):
         return
     signal_attr = dashboard.get("signal_attribution")
@@ -379,16 +431,21 @@ def normalize_dashboard_signal_attribution(dashboard: Optional[Dict[str, Any]]) 
             dashboard.pop("signal_attribution", None)
             return
         normalize_signal_attribution_values(signal_attr)
+        if isinstance(data_available, dict):
+            _enforce_zero_weights_for_missing_data(signal_attr, data_available)
 
 
-def normalize_report_signal_attribution(payload: Optional[Dict[str, Any]]) -> None:
+def normalize_report_signal_attribution(
+    payload: Optional[Dict[str, Any]],
+    data_available: Optional[Dict[str, bool]] = None,
+) -> None:
     """Normalize signal attribution in either a dashboard dict or full report dict."""
     if not isinstance(payload, dict):
         return
-    normalize_dashboard_signal_attribution(payload)
+    normalize_dashboard_signal_attribution(payload, data_available=data_available)
     dashboard = payload.get("dashboard")
     if isinstance(dashboard, dict):
-        normalize_dashboard_signal_attribution(dashboard)
+        normalize_dashboard_signal_attribution(dashboard, data_available=data_available)
 
 
 def signal_attribution_weight_items(signal_attr: Any) -> List[Tuple[str, int]]:

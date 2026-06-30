@@ -3414,6 +3414,8 @@ class GeminiAnalyzer:
                 parse_progress = min(99, 93 + retry_count * 2)
                 _emit_progress(parse_progress, f"{name}：LLM 返回完成，正在解析 JSON")
 
+                # 记录数据可用性，供 signal_attribution 后处理使用
+                self._last_data_available = self._build_data_availability(context, news_context)
                 # 解析响应
                 result = self._parse_response(response_text, code, name)
                 result.raw_response = response_text
@@ -3976,6 +3978,34 @@ class GeminiAnalyzer:
         except (TypeError, ValueError):
             return 'N/A'
 
+    @staticmethod
+    def _build_data_availability(
+        context: Dict[str, Any],
+        news_context: Optional[str] = None,
+    ) -> Dict[str, bool]:
+        """Determine which data sources had usable data.
+
+        Returns a dict mapping source keys to bool (True = data was available).
+        Used by signal_attribution post-processing to enforce zero weights.
+        """
+        # News: check if news_context has actual content (>50 chars non-trivial)
+        has_news = bool(news_context and len(news_context.strip()) > 50)
+        # Fundamentals: check if fundamental_context has meaningful data
+        fund_ctx = context.get("fundamental_context") if isinstance(context, dict) else None
+        has_fundamentals = bool(
+            fund_ctx
+            and isinstance(fund_ctx, dict)
+            and fund_ctx.get("earnings", {}).get("data", {}).get("financial_report")
+        )
+        # Chip distribution
+        chip = context.get("chip") if isinstance(context, dict) else None
+        has_chip = bool(chip and isinstance(chip, dict) and chip.get("profit_ratio") is not None)
+        return {
+            "news": has_news,
+            "fundamentals": has_fundamentals,
+            "chip": has_chip,
+        }
+
     def _build_market_snapshot(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """构建当日行情快照（展示用）"""
         today = context.get('today', {}) or {}
@@ -4279,7 +4309,10 @@ class GeminiAnalyzer:
             # 提取 dashboard 数据
             dashboard = data.get('dashboard', None)
             # 归一化 signal_attribution（LLM 可能返回字符串/负数/总和≠100）
-            normalize_report_signal_attribution(dashboard)
+            # 同时传入数据可用性标志，强制将缺失数据源的权重归零
+            normalize_report_signal_attribution(dashboard, data_available=(
+                self._last_data_available if hasattr(self, '_last_data_available') else None
+            ))
 
             # 优先使用 AI 返回的股票名称（如果原名称无效或包含代码）
             ai_stock_name = data.get('stock_name')

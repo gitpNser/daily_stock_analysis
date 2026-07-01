@@ -370,10 +370,11 @@ def normalize_signal_attribution_values(signal_attr: Optional[Dict[str, Any]]) -
 
 
 # Map data_available keys → signal_attribution weight keys
+# NOTE: chip data is a SUPPLEMENT to technical analysis, not its entirety.
+# When chip is missing, MA/RSI/volume data is still available — do NOT zero technical_indicators.
 _DATA_AVAILABILITY_WEIGHT_MAP: Dict[str, str] = {
     "news": "news_sentiment",
     "fundamentals": "fundamentals",
-    "chip": "technical_indicators",  # chip missing → reduce technical confidence
 }
 
 
